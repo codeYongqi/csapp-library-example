@@ -3,24 +3,83 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "csapp.h"
-#define N 10
+#define MAXARGS 128
 
-int main() {
-	int status, i;
-	pid_t pid[N], retpid;
+int parseline(char *buf, char **argv) {
+    char *delim;
+    int argc;
+    int bg;
 
-	for (i = 0; i < N; i++)
-		if ((pid[i] = Fork()) == 0)
-			exit(100 + i);
+    buf[strlen(buf)-1] = ' ';
+    while(*buf &&(*buf == ' '))
+        buf++;
+    
+    argc = 0;
+    while((delim = strchr(buf, ' '))) {
+        argv[argc++] = buf;
+        *delim = '\0';
+        buf = delim + 1;
+        while(*buf && (*buf == ' '))
+            buf ++;
+    }
 
-	i = 0;
-	while ((retpid = waitpid(pid[i++], &status, 0)) > 0) {
-		if (WIFEXITED(status))
-			printf("child %d terminated normally with exited status=%d\n", retpid, WEXITSTATUS(status));
-		else 
-			printf("child %d terminated normally\n", retpid);
-	}
+    if (argc == 0)
+        return 1;
+    
+    if ((bg = (*argv[argc-1] == '&')) != 0) {
+        argv[--argc] = NULL;
+    }
 
-	if (errno != ECHILD)
-		unix_error("waitpid error");
+    return bg;
+}
+
+int buildin_command(char **argv) {
+    if (!strcmp(argv[0], "quit"))
+        exit(0);
+    if (!strcmp(argv[0], "&"))
+        return 1;
+    return 0;
+}
+
+void eval(char *cmdline) {
+    char *argv[MAXARGS];
+    char buf[MAXLINE];
+    int bg;
+    pid_t pid;
+
+    strcpy(buf, cmdline);
+    bg = parseline(buf, argv);
+    if (argv[0] == NULL)
+        return;
+    
+    if (!buildin_command(argv)) {
+        if ((pid = Fork()) == 0) {
+            if (execve(argv[0], argv, environ) < 0) {
+                printf("%s: Command not found.\n", argv[0]);
+                exit(0);
+            }
+        }
+
+        if (!bg) {
+            int status;
+            if (waitpid(pid, &status, 0) < 0)
+                unix_error("waitfg: waitpid error");
+        }
+        else 
+            printf("%d %s", pid, cmdline);
+    }
+    return;
+}
+
+int main () {
+    char cmdline[MAXLINE];
+
+    while(1) {
+        printf("> ");
+        Fgets(cmdline, MAXLINE, stdin);
+        if (feof(stdin))
+            exit(0);
+        
+        eval(cmdline);
+    }
 }
