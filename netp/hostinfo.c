@@ -19,12 +19,38 @@ int main(int argc, char **argv) {
 	}
 
 	flags = NI_NUMERICHOST;
-	for (p = listp; p; p->ai_next) {
-		Getnameinfo(p->ai_addr, p->ai_addrlen, buf, MAXLINE, NUll, 0, flags);
+	for (p = listp; p; p=p->ai_next) {
+		Getnameinfo(p->ai_addr, p->ai_addrlen, buf, MAXLINE, NULL, 0, flags);
 		printf("%s\n", buf);
 	}
 
 	Freeaddrinfo(listp);
 
 	exit(0);
+}
+
+int open_listenfd(char *hostname, char *port) {
+	int listenfd, optval=1;
+	struct addrinfo hints, *listp, *p;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_NUMERICSERV;
+	hints.ai_flags |= AI_ADDRCONFIG;
+	Getaddrinfo(hostname, port, &hints, &listp);
+
+	for (p = listp; p; p = p->ai_next) {
+		if ((clientfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) < 0)
+			continue;
+		
+		if (connect(clientfd, p->ai_addr, p->ai_addrlen) != -1) 
+			break;
+		Close(clientfd);
+	}
+
+	Freeaddrinfo(listp);
+	if (!p)
+		return -1;
+	else
+		return clientfd;
 }
