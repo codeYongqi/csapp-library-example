@@ -1,11 +1,80 @@
 #include "csapp.h"
+void doit(int fd);
+void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
+void read_requesthdrs(rio_t *rp);
+int parse_uri(char *uri, char *filename, char *cgiargs);
+void serve_static(int fd, char *filename, int filesize);
+void get_filetype(char *filename, char *filetype);
+void serve_dynamic(int fd, char *filename, char *cgiargs); 
+
+int main(int argc, char **argv)
+{
+	int listenfd, connfd;
+	char hostname[MAXLINE], port[MAXLINE];
+	socklen_t clientlen;
+	struct sockaddr_storage clientaddr;
+
+	if (argc != 2) {
+		fprintf(stderr, "usage: %s <port> \n", argv[0]);
+		exit(1);
+	}
+
+	listenfd = Open_listenfd(argv[1]);
+	while (1)
+	{
+		clientlen = sizeof(clientaddr);
+		connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+		Getnameinfo((SA *)&clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
+		printf("Acceptd connection from (%s: %s)\n", hostname, port);
+		doit(connfd);
+		Close(connfd);
+	}
+}
+
+void doit(int fd) {
+	int is_static;
+	struct stat sbuf;
+	char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
+	char filename[MAXLINE], cgiargs[MAXLINE];
+	rio_t rio;
+
+	Rio_readinitb(&rio, fd);
+	Rio_readlineb(&rio, buf, MAXLINE);
+	printf("Request headers:\n");
+	printf("%s", buf);
+	sscanf(buf, "%s %s %s", method, uri, version);
+	if (strcasecmp(method, "GET")) {
+		clienterror(fd, method, "501", "Not implemented", "Tiny does not implent this method");
+		return;
+	}
+	read_requesthdrs(&rio);
+	is_static = parse_uri(uri, filename, cgiargs);
+	if (stat(filename, &sbuf) < 0) {
+		clienterror(fd, filename, "404", "Not found", "Tiny couldn't find this file");
+		return ;
+	}
+
+	if (is_static) {
+		if (!(S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode)) {
+			clienterror(fd, filename, "403", "Forbidden", "Tiny couldn't read this file");
+			return;
+		}
+		serve_static(fd, filename, sbuf.st_size);
+	} else {
+		if (!(S_ISREG(sbuf.st_mode)) || !(S_IXUSR & sbuf.st_mode)) {
+			clienterror(fd, filename, "403", "Forbidden", "Tiny could't run the CGI program");
+			return;
+		}
+		serve_dynamic(fd, filename, cgiargs);
+	}
+}
 
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg)
 {
 	char buf[MAXLINE], body[MAXLINE];
 
 	/* Response body */
-	sprintf(body, "<html><title>Tiny Error</title?");
+	sprintf(body, "<html><title>Tiny Error</title>");
 	sprintf(body, "%s<body bgcolor="
 				  "ffffff"
 				  ">\r\n",
@@ -63,7 +132,7 @@ int parse_uri(char *uri, char *filename, char *cgiargs)
 		}
 		strcpy(filename, ".");
 		strcat(filename, uri);
-		return 0
+		return 0;
 	}
 }
 
@@ -82,7 +151,7 @@ void serve_static(int fd, char *filename, int filesize) {
 	printf("%s", buf);
 
 	srcfd = Open(filename, O_RDONLY, 0);
-	srcp = Mmap(0, filename, PROT_READ, MAP_PRIVATE, srcfd, 0);
+	srcp = Mmap(0, filesize, PROT_READ, MAP_PRIVATE, srcfd, 0);
 	Close(srcfd);
 	Rio_writen(fd, srcp, filesize);
 	Munmap(srcp, filesize);
